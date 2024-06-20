@@ -21,7 +21,7 @@ func get(url string) (body []byte, err error) {
 	body, err = io.ReadAll(res.Body)
 	res.Body.Close()
 	if res.StatusCode > 299 {
-		err = fmt.Errorf("Response failed with status code: %d, body: %s\n", res.StatusCode, body)
+		err = fmt.Errorf("[%d] endpoint: %s, body: %s\n", res.StatusCode, url, body)
 	}
 	return
 }
@@ -107,11 +107,6 @@ func isRelevant(entry osEntry) bool {
 	}
 
 	return !strings.HasPrefix(name, "test")
-}
-
-type msg struct {
-	name    string
-	content []byte
 }
 
 func moveDir(from, to string, perm os.FileMode) error {

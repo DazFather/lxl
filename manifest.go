@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+const BASE_ENDPOINT = "https://raw.githubusercontent.com/lite-xl/lite-xl-plugins/master/"
+
 type manifest struct {
 	Addons  []addon     `json:"addons,omitempty"`
 	Remotes []string    `json:"remotes,omitempty"`
@@ -21,7 +23,7 @@ var cache *manifest
 func fetchManifest() (*manifest, error) {
 	if cache == nil {
 		cache = new(manifest)
-		if raw, e := get("https://raw.githubusercontent.com/lite-xl/lite-xl-plugins/master/manifest.json"); e != nil {
+		if raw, e := get(BASE_ENDPOINT + "manifest.json"); e != nil {
 			return nil, fmt.Errorf("Error while retrieveing manifest: %s", e)
 		} else if e = json.Unmarshal(raw, cache); e != nil {
 			return cache, fmt.Errorf("Error while parsing manifest: %s", e)
@@ -180,21 +182,23 @@ func (a addon) dir(subdir ...string) (string, error) {
 
 func (a addon) endpoint() (endpoint string, singleton bool, err error) {
 	if a.Url != "" {
-		endpoint = a.Url //singleton
-		singleton = true
+		endpoint = a.Url
 	} else if a.Remote == "" {
 		switch len(a.Files) {
 		case 0:
-			endpoint = "https://raw.githubusercontent.com/lite-xl/lite-xl-plugins/master/plugins/" + a.ID + ".lua"
+			endpoint = BASE_ENDPOINT + a.AddonsType.folder() + "/" + a.ID + ".lua"
 		case 1:
 			endpoint = a.Files[0].Url
 		default:
-			err = fmt.Errorf("Cannot find one ")
+			err = fmt.Errorf("Cannot find valid endpoint")
 		}
-	} else {
+	} else if strings.HasPrefix(a.Remote, "http") {
 		endpoint = a.Remote
-		singleton = strings.HasSuffix(a.Remote, ".lua")
+	} else {
+		endpoint = BASE_ENDPOINT + a.Remote
 	}
+
+	singleton = strings.HasSuffix(endpoint, ".lua")
 
 	return
 }
