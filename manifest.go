@@ -112,21 +112,20 @@ func (f file) download() error {
 	return err
 }
 
-type addonsType string
+type addonsType uint8
 
 const (
-	meta    addonsType = "meta"
-	font    addonsType = "font"
-	library addonsType = "library"
-	plugin  addonsType = "plugin"
-	color   addonsType = "color"
+	meta addonsType = iota
+	font
+	library
+	plugin
+	color
 )
 
+var aTypes = []string{"meta", "font", "library", "plugin", "color"}
+
 func (t addonsType) String() string {
-	if t == "" {
-		return string(plugin)
-	}
-	return string(t)
+	return aTypes[t]
 }
 
 func (t *addonsType) UnmarshalJSON(b []byte) error {
@@ -135,22 +134,22 @@ func (t *addonsType) UnmarshalJSON(b []byte) error {
 		return err
 	}
 
-	switch addonsType(s) {
-	case "":
-		*t = plugin
-	case font, library, plugin, color, meta:
-		*t = addonsType(s)
-	default:
-		return fmt.Errorf("Unrecognized addon type: %s", s)
+	for i := range aTypes {
+		if s == aTypes[i] {
+			*t = addonsType(i)
+		}
 	}
 
+	if t == nil {
+		return fmt.Errorf("Unrecognized addon type: %s", s)
+	}
 	return nil
 }
 
 func (t addonsType) folder() string {
 	switch t {
 	case color, font, plugin:
-		return string(t) + "s"
+		return t.String() + "s"
 	case library:
 		return "libraries"
 	}

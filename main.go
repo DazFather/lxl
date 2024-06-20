@@ -4,20 +4,33 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
-const USAGE = "Usage: lxl <install|uninstall|find> <pluginID>"
-
 func main() {
 	var err error
-	if len(os.Args) < 3 {
-		fmt.Println("Missing arguments.\n", USAGE)
+
+	switch len(os.Args) {
+	case 2:
+		switch os.Args[1] {
+		case "help":
+			success("help", USAGE)
+			return
+		case "find", "list":
+			success("list", "Use find followed by something to filter results")
+			if err = find(""); err != nil {
+				danger("Unable to find", err)
+			}
+			return
+		}
+		fallthrough
+	case 0, 1:
+		warn("Invalid arguments", USAGE)
+		return
 	}
 
 	switch os.Args[1] {
-	case "help":
-		fmt.Println(USAGE)
 	case "install":
 		err = install(os.Args[2])
 	case "uninstall":
@@ -25,12 +38,14 @@ func main() {
 	case "find":
 		err = find(os.Args[2])
 	default:
-		fmt.Println("Invalid given action.\n", USAGE)
+		danger("Unrecognized command", USAGE)
 		return
 	}
 
 	if err != nil {
-		fmt.Println("Unable to", os.Args[1]+":", err)
+		danger("Unable to "+os.Args[1], err)
+	} else {
+		success(os.Args[1]+" \""+os.Args[2]+"\"", "Completed successfully")
 	}
 }
 
@@ -40,13 +55,17 @@ func find(addonID string) (err error) {
 	if err != nil {
 		return
 	}
-	addonID = strings.ToLower(addonID)
 
 	// Finding addon
 	var found []addon
-	for _, item := range manifest.Addons {
-		if strings.Contains(strings.ToLower(item.ID), addonID) {
-			found = append(found, item)
+	if addonID == "" {
+		found = manifest.Addons
+	} else {
+		addonID = strings.ToLower(addonID)
+		for _, item := range manifest.Addons {
+			if strings.Contains(strings.ToLower(item.ID), addonID) {
+				found = append(found, item)
+			}
 		}
 	}
 
@@ -54,20 +73,12 @@ func find(addonID string) (err error) {
 	case 0:
 		return fmt.Errorf("Cannot find any addon")
 	case 1:
-		var (
-			selected = found[0]
-			atype    = "(" + string(selected.AddonsType) + ")"
-		)
-
-		fmt.Println("Found 1 addon:", selected.ID, "v.", selected.Version, atype,
-			"\nTo install last version use command:\n lxl install", selected.ID,
-			"\nDescription:", selected.Description,
-		)
+		success(os.Args[1], "Found 1 matching addon")
+		fmt.Println(found[0].showcase())
 	default:
-		fmt.Println("Found ", len(found), "addons matching:")
+		success(os.Args[1], "Found "+strconv.Itoa(len(found))+" addons matching")
 		for _, item := range found {
-			icon := strings.ToUpper(item.AddonsType.String()[:1])
-			fmt.Printf("[ %s ]\t%-15s %s\n", icon, item.ID, truncAfter(item.Description, 50))
+			fmt.Println(" ", item.snippet(50))
 		}
 	}
 	return
@@ -76,7 +87,7 @@ func find(addonID string) (err error) {
 func uninstall(addonID string) (err error) {
 	var filepath string
 
-	for _, atype := range []addonsType{plugin, font, color, library} {
+	for _, atype := range []addonsType{plugin, font, library, color, meta} {
 		if filepath, err = configPath(atype.folder(), addonID); err != nil {
 			return
 		}
