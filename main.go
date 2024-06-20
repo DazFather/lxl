@@ -16,6 +16,8 @@ func main() {
 	}
 
 	switch os.Args[1] {
+	case "help":
+		fmt.Println(USAGE)
 	case "install":
 		err = install(os.Args[2])
 	case "uninstall":
@@ -73,12 +75,19 @@ func find(addonID string) (err error) {
 
 func uninstall(addonID string) (err error) {
 	var filepath string
-	for _, atype := range []addonsType{plugin, font, color} {
-		filepath, err = configPath(atype.folder(), addonID)
-		err = remove(filepath)
-		if !os.IsNotExist(err) {
+
+	for _, atype := range []addonsType{plugin, font, color, library} {
+		if filepath, err = configPath(atype.folder(), addonID); err != nil {
 			return
 		}
+
+		if err = remove(filepath); !os.IsNotExist(err) {
+			return
+		}
+	}
+
+	if os.IsNotExist(err) {
+		err = nil
 	}
 	return
 }

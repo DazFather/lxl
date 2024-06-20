@@ -21,7 +21,7 @@ func get(url string) (body []byte, err error) {
 	body, err = io.ReadAll(res.Body)
 	res.Body.Close()
 	if res.StatusCode > 299 {
-		fmt.Errorf("Response failed with status code: %d, body: %s\n", res.StatusCode, body)
+		err = fmt.Errorf("Response failed with status code: %d, body: %s\n", res.StatusCode, body)
 	}
 	return
 }
@@ -109,15 +109,15 @@ func isRelevant(entry osEntry) bool {
 	return !strings.HasPrefix(name, "test")
 }
 
-func moveDirFiltered(from, to string, perm os.FileMode, allow func(string, os.DirEntry) bool) error {
-	from, to = filepath.Clean(from), filepath.Clean(to)
+type msg struct {
+	name    string
+	content []byte
+}
 
-	type msg struct {
-		name    string
-		content []byte
-	}
-	e := make(chan error, 1)
-	queue := make(chan msg)
+func moveDir(from, to string, perm os.FileMode) error {
+	var e, queue = make(chan error, 1), make(chan string)
+
+	from, to = filepath.Clean(from), filepath.Clean(to)
 
 	go func() {
 		defer close(queue)
@@ -132,37 +132,18 @@ func moveDirFiltered(from, to string, perm os.FileMode, allow func(string, os.Di
 				return errin
 			}
 
-			if d.IsDir() {
-				if path == from {
-					return nil
-				}
-				if !allow(path, d) {
-					return filepath.SkipDir
-				}
-				return os.Mkdir(filepath.Join(to, strings.TrimPrefix(path, from)), perm)
-			} else if !allow(path, d) {
-				return nil
+			if !d.IsDir() {
+				queue <- path
+			} else if path != from {
+				err = os.Mkdir(filepath.Join(to, strings.TrimPrefix(path, from)), perm)
 			}
-
-			content, err := os.ReadFile(path)
-			if err == nil {
-				queue <- msg{strings.TrimPrefix(path, from), content}
-			}
-
 			return
 		})
-
 	}()
 
-	for item := range queue {
-		f, err := os.Create(filepath.Join(to, item.name))
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-
-		_, err = f.Write(item.content)
-		if err != nil {
+	for path := range queue {
+		tail := strings.TrimPrefix(path, from)
+		if err := os.Rename(path, filepath.Join(to, tail)); err != nil {
 			return err
 		}
 	}
@@ -170,15 +151,10 @@ func moveDirFiltered(from, to string, perm os.FileMode, allow func(string, os.Di
 	return <-e
 }
 
-func moveDir(from, to string, perm os.FileMode) error {
-	from, to = filepath.Clean(from), filepath.Clean(to)
+func moveDirFiltered(from, to string, perm os.FileMode, allow func(string, os.DirEntry) bool) error {
+	var e, queue = make(chan error, 1), make(chan string)
 
-	type msg struct {
-		name    string
-		content []byte
-	}
-	e := make(chan error, 1)
-	queue := make(chan msg)
+	from, to = filepath.Clean(from), filepath.Clean(to)
 
 	go func() {
 		defer close(queue)
@@ -193,16 +169,14 @@ func moveDir(from, to string, perm os.FileMode) error {
 				return errin
 			}
 
-			if d.IsDir() {
-				if path == from {
-					return nil
+			if allow(path, d) {
+				if !d.IsDir() {
+					queue <- path
+				} else if path != from {
+					err = os.Mkdir(filepath.Join(to, strings.TrimPrefix(path, from)), perm)
 				}
-				return os.Mkdir(filepath.Join(to, strings.TrimPrefix(path, from)), perm)
-			}
-
-			content, err := os.ReadFile(path)
-			if err == nil {
-				queue <- msg{strings.TrimPrefix(path, from), content}
+			} else if d.IsDir() {
+				err = filepath.SkipDir
 			}
 
 			return
@@ -210,15 +184,9 @@ func moveDir(from, to string, perm os.FileMode) error {
 
 	}()
 
-	for item := range queue {
-		f, err := os.Create(filepath.Join(to, item.name))
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-
-		_, err = f.Write(item.content)
-		if err != nil {
+	for path := range queue {
+		tail := strings.TrimPrefix(path, from)
+		if err := os.Rename(path, filepath.Join(to, tail)); err != nil {
 			return err
 		}
 	}
