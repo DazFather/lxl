@@ -234,5 +234,5 @@ func (a addon) install() error {
 		}
 	}
 
-	return err
+	return a.Post.execute()
 }

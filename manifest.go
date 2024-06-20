@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -63,6 +64,18 @@ func (p *post) UnmarshalJSON(b []byte) error {
 		}
 	}
 	return fmt.Errorf("Invalid post on: %s", b)
+}
+
+func (p post) execute() error {
+	if p == "" {
+		return nil
+	}
+
+	cmd := exec.Command(string(p))
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+
+	return cmd.Run()
 }
 
 type dependency struct {
