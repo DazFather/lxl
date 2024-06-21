@@ -3,10 +3,11 @@ package main
 import (
 	"fmt"
 	"github.com/DazFather/brush"
+	"strconv"
 	"strings"
 )
 
-const USAGE = "Usage: lxl <install|uninstall|find> <pluginID>"
+const USAGE = "Usage: lxl <install|uninstall|find|list> <pluginID>"
 
 // Palette
 var (
@@ -38,7 +39,7 @@ func (t addonsType) icon() brush.Painted {
 	s := t.String()
 	ch := " " + strings.ToUpper(s[:1]) + " "
 
-	return brush.Paint(brush.White, brush.UseColor(t.color()), ch)
+	return brush.Paint(brush.BrightWhite, brush.UseColor(t.color()), ch)
 }
 
 func (a addon) snippet(maxDesc int) brush.Highlighted {
@@ -61,11 +62,27 @@ func (a addon) showcase() brush.Highlighted {
 
 	return brush.Join(
 		brush.Paint(brush.White, brush.UseColor(color), " ", strings.ToUpper(a.AddonsType.String()), " "),
-		brush.Paint(color, nil, "\t" + a.ID),
+		brush.Paint(color, nil, "\t"+a.ID),
 		"\tv. ", a.Version,
 		"\nDescription: ", a.Description,
 		"\n\nTo install last version use command:\n ",
 		brush.Paint(brush.BrightWhite, brush.UseColor(brush.BrightBlack), " lxl install ", a.ID, " "),
 		"\n",
 	)
+}
+
+func showAddons(header string, addons []addon) error {
+	switch len(addons) {
+	case 0:
+		return fmt.Errorf("Cannot find any addon")
+	case 1:
+		success(header, "Found 1 matching addon")
+		fmt.Println(addons[0].showcase())
+	default:
+		success(header, "Found "+strconv.Itoa(len(addons))+" addons matching")
+		for _, item := range addons {
+			fmt.Println(" ", item.snippet(45))
+		}
+	}
+	return nil
 }

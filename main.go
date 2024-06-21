@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -15,12 +14,17 @@ func main() {
 	case 2:
 		switch os.Args[1] {
 		case "help":
-			success("help", USAGE)
+			success(os.Args[1], USAGE)
 			return
-		case "find", "list":
-			success("list", "Use find followed by something to filter results")
+		case "list":
+			if err = list(""); err != nil {
+				danger("Unable to "+os.Args[1], err)
+			}
+			return
+		case "find":
+			success(os.Args[1], "Use ", os.Args[1], " followed by something to filter results")
 			if err = find(""); err != nil {
-				danger("Unable to find", err)
+				danger("Unable to "+os.Args[1], err)
 			}
 			return
 		}
@@ -31,6 +35,8 @@ func main() {
 	}
 
 	switch os.Args[1] {
+	case "list":
+		err = list(os.Args[2])
 	case "install":
 		err = install(os.Args[2])
 	case "uninstall":
@@ -69,25 +75,13 @@ func find(addonID string) (err error) {
 		}
 	}
 
-	switch len(found) {
-	case 0:
-		return fmt.Errorf("Cannot find any addon")
-	case 1:
-		success(os.Args[1], "Found 1 matching addon")
-		fmt.Println(found[0].showcase())
-	default:
-		success(os.Args[1], "Found "+strconv.Itoa(len(found))+" addons matching")
-		for _, item := range found {
-			fmt.Println(" ", item.snippet(50))
-		}
-	}
-	return
+	return showAddons(os.Args[1], found)
 }
 
 func uninstall(addonID string) (err error) {
 	var filepath string
 
-	for _, atype := range []addonsType{plugin, font, library, color, meta} {
+	for _, atype := range []addonsType{plugin, font, library, color} {
 		if filepath, err = configPath(atype.folder(), addonID); err != nil {
 			return
 		}
@@ -158,6 +152,60 @@ func install(addonID string) (err error) {
 
 	// Installing addon
 	return found.install()
+}
+
+func list(addonID string) (err error) {
+	// Retrieve manifest
+	manifest, err := fetchManifest()
+	if err != nil {
+		return
+	}
+
+	addonID = strings.ToLower(addonID)
+
+	var (
+		i         int
+		list      []addon
+		foundEach = make(chan []addon, len(aTypes)-1)
+		errch     = make(chan error, 1)
+	)
+	for i := range aTypes[:len(aTypes)-1] {
+		go func(t addonsType) {
+			list, err := collectDir(t, addonID)
+			if err != nil {
+				errch <- err
+			}
+			foundEach <- list
+		}(addonsType(i))
+	}
+
+out:
+	for {
+		select {
+		case addons := <-foundEach:
+			list = append(list, addons...)
+			if i++; len(aTypes)-1 == i {
+				close(errch)
+				break out
+			}
+		case err = <-errch:
+			return err
+		}
+	}
+
+	for _, item := range manifest.Addons {
+		if item.AddonsType == meta {
+			continue
+		}
+
+		for i := range list {
+			if list[i].ID == item.ID {
+				list[i] = item
+			}
+		}
+	}
+
+	return showAddons(os.Args[1], list)
 }
 
 func (a addon) install() error {

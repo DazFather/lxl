@@ -115,14 +115,14 @@ func (f file) download() error {
 type addonsType uint8
 
 const (
-	meta addonsType = iota
+	plugin addonsType = iota
 	font
 	library
-	plugin
 	color
+	meta
 )
 
-var aTypes = []string{"meta", "font", "library", "plugin", "color"}
+var aTypes = []string{"plugin", "font", "library", "color", "meta"}
 
 func (t addonsType) String() string {
 	return aTypes[t]

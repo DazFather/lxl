@@ -188,3 +188,30 @@ func moveDirFiltered(from, to string, perm os.FileMode, allow func(string, os.Di
 
 	return <-e
 }
+
+func collectDir(t addonsType, contains string) (found []addon, err error) {
+	from, err := configPath(t.folder())
+	if err != nil {
+		return
+	}
+
+	err = filepath.WalkDir(from, func(path string, d os.DirEntry, errin error) (err error) {
+		if errin != nil {
+			return errin
+		}
+
+		name := d.Name()
+		if path == from || !strings.Contains(name, contains) {
+			return
+		}
+
+		if d.IsDir() {
+			err = filepath.SkipDir
+		}
+		ext := filepath.Ext(name)
+		found = append(found, addon{ID: name[:len(name)-len(ext)], AddonsType: t})
+		return
+	})
+
+	return
+}
