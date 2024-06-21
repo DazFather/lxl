@@ -54,34 +54,44 @@ func clone(repoEndpoint, path string) (string, error) {
 		}
 	}
 
-	commands := [][]string{
-		{"clone", repo, path},
-		{"--git-dir=" + filepath.Join(path, ".git"), "--work-tree=" + path, "checkout", commit},
+	cmd := exec.Command("git", "clone", repo, path)
+	if err = cmd.Run(); err != nil {
+		return "", fmt.Errorf("Cannot clone repository %s: %w", repo, err)
 	}
 
-	for _, args := range commands {
-		cmd := exec.Command("git", args...)
+	if commit != "" {
+		cmd = exec.Command("git", "--git-dir="+filepath.Join(path, ".git"), "--work-tree="+path, "checkout", commit)
 		if err = cmd.Run(); err != nil {
-			return "", fmt.Errorf("Cannot execute:\n git %s\n%w", strings.Join(args, " "), err)
+			return "", fmt.Errorf("Cannot checkout at %s: %w", commit, err)
 		}
 	}
 
 	return path, nil
 }
 
-func extract(rawrepo string) (repo, folder, commit string, err error) {
-	rgx := regexp.MustCompile(`^(https?://[\w\-/\.]+/([\w+\-]+)\.?g?i?t?):(\w+)$`)
+func extract(rawrepo string) (repo, name, commit string, err error) {
+	rgx := regexp.MustCompile(`^(https?://[\w\-/\.]+/([\w\-\.]+)):?(\w+)?$`)
 	res := rgx.FindStringSubmatch(rawrepo)
-	if len(res) != 4 {
+	switch len(res) {
+	case 4:
+		if cmt := res[3]; cmt != "last" && cmt != "latest" {
+			commit = cmt
+		}
+		fallthrough
+	case 3:
+		repo = res[1]
+		switch path.Ext(res[2]) {
+		case "":
+			name = res[2] + ".git"
+		case ".git":
+			name = res[2]
+		default:
+			err = fmt.Errorf("Unsupported extention")
+		}
+	default:
 		err = fmt.Errorf("Malformed repository link: %s", rawrepo)
-		return
 	}
 
-	if path.Ext(res[1]) == "" {
-		res[1] += ".git"
-	}
-
-	repo, folder, commit = res[1], res[2], res[3]
 	return
 }
 
