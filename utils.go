@@ -38,6 +38,7 @@ func remove(path string) (err error) {
 	if _, err = os.Stat(path); err == nil {
 		err = os.RemoveAll(path)
 	}
+
 	return err
 }
 

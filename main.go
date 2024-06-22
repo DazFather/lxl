@@ -80,17 +80,29 @@ func find(addonID string) (err error) {
 
 func uninstall(addonID string) (err error) {
 	var filepath string
+	var delted bool
+
+	addonID = strings.TrimSuffix(addonID, ".lua")
 
 	for _, atype := range []addonsType{plugin, font, library, color} {
 		if filepath, err = configPath(atype.folder(), addonID); err != nil {
 			return
 		}
 
-		if err = remove(filepath); !os.IsNotExist(err) {
+		if err = remove(filepath); err == nil {
+			delted = true
+		} else if os.IsNotExist(err) {
+			if err = remove(filepath + ".lua"); err == nil {
+				delted = true
+			}
+		} else {
 			return
 		}
 	}
 
+	if !delted {
+		err = fmt.Errorf("Cannot find \"%s\" addon", addonID)
+	}
 	if os.IsNotExist(err) {
 		err = nil
 	}
