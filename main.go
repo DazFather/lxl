@@ -79,33 +79,21 @@ func find(addonID string) (err error) {
 }
 
 func uninstall(addonID string) (err error) {
-	var filepath string
 	var delted bool
 
-	addonID = strings.TrimSuffix(addonID, ".lua")
-
-	for _, atype := range []addonsType{plugin, font, library, color} {
-		if filepath, err = configPath(atype.folder(), addonID); err != nil {
-			return
-		}
-
-		if err = remove(filepath); err == nil {
-			delted = true
-		} else if os.IsNotExist(err) {
-			if err = remove(filepath + ".lua"); err == nil {
+	err = rangeSaved(func(a addon) (e error) {
+		if a.ID == addonID {
+			if e = remove(a.Path); e == nil {
 				delted = true
 			}
-		} else {
-			return
 		}
-	}
+		return
+	})
 
-	if !delted {
+	if err == nil && !delted {
 		err = fmt.Errorf("Cannot find \"%s\" addon", addonID)
 	}
-	if os.IsNotExist(err) {
-		err = nil
-	}
+
 	return
 }
 
@@ -167,42 +155,23 @@ func install(addonID string) (err error) {
 }
 
 func list(addonID string) (err error) {
-	// Retrieve manifest
-	manifest, err := fetchManifest()
+	var list []addon
+	addonID = strings.ToLower(addonID)
+
+	err = rangeSaved(func(a addon) error {
+		if strings.Contains(a.ID, addonID) {
+			list = append(list, a)
+		}
+		return nil
+	})
 	if err != nil {
 		return
 	}
 
-	addonID = strings.ToLower(addonID)
-
-	var (
-		i         int
-		list      []addon
-		foundEach = make(chan []addon, len(aTypes)-1)
-		errch     = make(chan error, 1)
-	)
-	for i := range aTypes[:len(aTypes)-1] {
-		go func(t addonsType) {
-			list, err := collectDir(t, addonID)
-			if err != nil {
-				errch <- err
-			}
-			foundEach <- list
-		}(addonsType(i))
-	}
-
-out:
-	for {
-		select {
-		case addons := <-foundEach:
-			list = append(list, addons...)
-			if i++; len(aTypes)-1 == i {
-				close(errch)
-				break out
-			}
-		case err = <-errch:
-			return err
-		}
+	// Retrieve manifest
+	manifest, err := fetchManifest()
+	if err != nil {
+		return
 	}
 
 	for _, item := range manifest.Addons {

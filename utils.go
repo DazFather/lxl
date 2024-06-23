@@ -200,29 +200,61 @@ func moveDirFiltered(from, to string, perm os.FileMode, allow func(string, os.Di
 	return <-e
 }
 
-func collectDir(t addonsType, contains string) (found []addon, err error) {
-	from, err := configPath(t.folder())
-	if err != nil {
-		return
-	}
+func rangeSaved(each func(addon) error) error {
+	ch, errch := make(chan []addon, len(aTypes)-1), make(chan error, 1)
 
-	err = filepath.WalkDir(from, func(path string, d os.DirEntry, errin error) (err error) {
-		if errin != nil {
-			return errin
-		}
-
-		name := d.Name()
-		if path == from || !strings.Contains(name, contains) {
+	fn := func(t addonsType) {
+		var list []addon
+		from, err := configPath(t.folder())
+		if err != nil {
+			errch <- err
 			return
 		}
 
-		if d.IsDir() {
-			err = filepath.SkipDir
-		}
-		ext := filepath.Ext(name)
-		found = append(found, addon{ID: name[:len(name)-len(ext)], AddonsType: t})
-		return
-	})
+		err = filepath.WalkDir(from, func(path string, d os.DirEntry, errin error) (err error) {
+			if errin != nil {
+				return errin
+			}
 
-	return
+			name := d.Name()
+			if path == from {
+				return
+			}
+
+			if d.IsDir() {
+				err = filepath.SkipDir
+			}
+
+			list = append(list, addon{
+				ID:         name[:len(name)-len(filepath.Ext(name))],
+				AddonsType: t,
+				Path:       path,
+			})
+			return
+		})
+		if err != nil {
+			errch <- err
+		} else {
+			ch <- list
+		}
+	}
+
+	for i := range aTypes[:len(aTypes)-1] {
+		go fn(addonsType(i))
+	}
+
+	for i := 0; i < len(aTypes)-1; {
+		select {
+		case addons := <-ch:
+			for _, a := range addons {
+				if err := each(a); err != nil {
+					return err
+				}
+			}
+			i++
+		case err := <-errch:
+			return err
+		}
+	}
+	return nil
 }
