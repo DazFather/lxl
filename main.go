@@ -3,34 +3,43 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 )
 
 func main() {
 	var err error
+	onExit := func() {
+		if err != nil {
+			danger("Unable to "+os.Args[1], err)
+		} else {
+			success(os.Args[1], "Completed successfully")
+		}
+	}
+	defer onExit()
 
 	switch len(os.Args) {
 	case 2:
 		switch os.Args[1] {
 		case "help":
 			success(os.Args[1], USAGE)
+			onExit = func() {}
 			return
 		case "list":
-			if err = list(""); err != nil {
-				danger("Unable to "+os.Args[1], err)
-			}
+			err = list("")
 			return
 		case "find":
-			success(os.Args[1], "Use ", os.Args[1], " followed by something to filter results")
-			if err = find(""); err != nil {
-				danger("Unable to "+os.Args[1], err)
-			}
+			err = find("")
+			return
+		case "remotes":
+			err = remotes("")
 			return
 		}
 		fallthrough
 	case 0, 1:
 		warn("Invalid arguments", USAGE)
+		onExit = func() {}
 		return
 	}
 
@@ -43,15 +52,16 @@ func main() {
 		err = uninstall(os.Args[2])
 	case "find":
 		err = find(os.Args[2])
+	case "subscribe":
+		err = subscribe(os.Args[2])
+	case "unsubscribe":
+		err = unsubscribe(os.Args[2])
+	case "remotes":
+		err = remotes(os.Args[2])
 	default:
 		danger("Unrecognized command", USAGE)
+		onExit = func() {}
 		return
-	}
-
-	if err != nil {
-		danger("Unable to "+os.Args[1], err)
-	} else {
-		success(os.Args[1]+" \""+os.Args[2]+"\"", "Completed successfully")
 	}
 }
 
@@ -75,7 +85,10 @@ func find(addonID string) (err error) {
 		}
 	}
 
-	return showAddons(os.Args[1], found)
+	if err = showAddons(os.Args[1], found); addonID == "" && err == nil {
+		success(os.Args[1]+" tip", "Use ", os.Args[1], " followed by something to filter results")
+	}
+	return
 }
 
 func uninstall(addonID string) (err error) {
@@ -189,90 +202,62 @@ func list(addonID string) (err error) {
 	return showAddons(os.Args[1], list)
 }
 
-func (a addon) install() error {
-	if !a.supported() {
-		return fmt.Errorf("plugin does not support your OS")
-	}
-
-	var repo, singleton, err = a.endpoint()
-	if err != nil {
-		return err
-	}
-
-	local, err := a.dir()
-	if err != nil {
-		return err
-	}
-
-	if singleton {
-		if !strings.HasSuffix(local, ".lua") {
-			local += ".lua"
+func subscribe(repo string) error {
+	return updateStatus(func(l *lxl) error {
+		added, e := l.add(repo)
+		if e == nil && !added {
+			e = fmt.Errorf("evaluated remote %s is already present on lxl remote list", repo)
 		}
+		return e
+	})
+}
 
-		content, err := get(repo)
-		if err == nil {
-			err = os.WriteFile(local, content, 0666)
+func unsubscribe(repo string) error {
+	return updateStatus(func(l *lxl) error {
+		if ind := slices.Index(l.Remotes, repo); ind > 0 {
+			l.Remotes = append(l.Remotes[:ind], l.Remotes[ind+1:]...)
+			return nil
 		}
-		return err
+		return fmt.Errorf("cannot find %s remote", repo)
+	})
+}
+
+func remotes(filter string) (err error) {
+	if err = loadStatus(); err != nil {
+		return
 	}
 
-	switch a.Path {
-	case ".", filepath.Join(a.AddonsType.folder(), a.ID):
-		_, err = clone(repo, local)
+	switch size := len(cache.Remotes); size {
+	case 0:
+		err = fmt.Errorf("No remote found")
+	case 1:
+		success("Found one remote", "details:")
+		fmt.Println(showRemote(cache.Remotes[0]))
 	default:
-		path, e := clone(repo, "")
-		if e != nil {
-			return e
-		}
-		defer remove(path)
+		success("Found "+strconv.Itoa(size)+" remotes", "List of avaiable remotes:")
 
-		// Detecting singleton
-		entries, e := os.ReadDir(path)
-		if e != nil {
-			return e
+		remoteCh := make(chan string, size)
+		for _, u := range cache.Remotes {
+			go func(url string) {
+				remoteCh <- showRemote(url)
+			}(u)
 		}
-		var init *string
-		for _, item := range entries {
-			if !isRelevant(item) {
-				if item.Name() == "manifest.json" {
-					fmt.Println("WARING: stud currently not supported")
-				}
-				continue
-			}
 
-			if init == nil {
-				init = new(string)
-				*init = item.Name()
-			} else {
-				init = nil
-				break
+		i := 0
+		for screen := range remoteCh {
+			fmt.Println(screen)
+			if i++; i == size {
+				close(remoteCh)
 			}
 		}
-		// Singleton detected
-		if init != nil {
-			local += ".lua"
-			err = os.Rename(filepath.Join(path, *init), local)
-			break
-		}
-
-		err = moveDirFiltered(path, local, 0750, func(_ string, d os.DirEntry) bool {
-			return isRelevant(d)
-		})
-
-		if err != nil {
-			remove(local)
-		}
 	}
 
-	if err != nil {
-		return err
-	}
+	fmt.Print("\n\nYou can manage your remote using the following command:\n add a new remote ")
+	command(" lxl subscribe <remote> ")
+	fmt.Print(" remove a remote  ")
+	command(" lxl unsubscribe <remote> ")
+	fmt.Println()
+	warn("remote will be evaluated", "When adding a new remote the link will be evaluated for performance optimization, therefore original will be lost and then new one will appear on the list\n")
 
-	for _, f := range a.Files {
-		if err = f.download(); err != nil && err != wrongOs && !f.Optional {
-			return err
-		}
-	}
-
-	return a.Post.execute()
+	return
 }

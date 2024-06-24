@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/BurntSushi/toml"
 )
 
 func get(url string) (body []byte, err error) {
@@ -157,7 +159,7 @@ func moveDir(from, to string, perm os.FileMode) error {
 	return <-e
 }
 
-func moveDirFiltered(from, to string, perm os.FileMode, allow func(string, os.DirEntry) bool) error {
+func moveDirFiltered(from, to string, allow func(string, os.DirEntry) bool) error {
 	var e, queue = make(chan error, 1), make(chan string)
 
 	from, to = filepath.Clean(from), filepath.Clean(to)
@@ -165,7 +167,7 @@ func moveDirFiltered(from, to string, perm os.FileMode, allow func(string, os.Di
 	go func() {
 		defer close(queue)
 
-		if err := os.MkdirAll(to, perm); err != nil {
+		if err := os.MkdirAll(to, 0750); err != nil {
 			e <- err
 			return
 		}
@@ -179,7 +181,7 @@ func moveDirFiltered(from, to string, perm os.FileMode, allow func(string, os.Di
 				if !d.IsDir() {
 					queue <- path
 				} else if path != from {
-					err = os.Mkdir(filepath.Join(to, strings.TrimPrefix(path, from)), perm)
+					err = os.Mkdir(filepath.Join(to, strings.TrimPrefix(path, from)), 0750)
 				}
 			} else if d.IsDir() {
 				err = filepath.SkipDir
@@ -257,4 +259,55 @@ func rangeSaved(each func(addon) error) error {
 		}
 	}
 	return nil
+}
+
+func loadStatus() (err error) {
+	const suffix = "/master/manifest.json"
+	var (
+		content []byte
+		path    string
+	)
+	if path, err = configPath("lxl", "status.toml"); err != nil {
+		return err
+	}
+
+	// Read /lxl/status.toml
+	if content, err = os.ReadFile(path); err == nil {
+		cache = new(lxl)
+		if err = toml.Unmarshal(content, cache); err == nil {
+			return
+		}
+	} else if os.IsNotExist(err) {
+		cache = &lxl{Path: path, Remotes: []string{
+			BASE_ENDPOINT + "lite-xl-plugins" + suffix,
+			BASE_ENDPOINT + "lite-xl-lsp-servers" + suffix,
+			BASE_ENDPOINT + "lite-xl-ide" + suffix,
+		}}
+		err = saveStatus()
+	}
+
+	return
+}
+
+func saveStatus() (err error) {
+	if err = os.Mkdir(filepath.Dir(cache.Path), 0750); err != nil && !os.IsExist(err) {
+		return
+	}
+
+	content := []byte{}
+	if content, err = toml.Marshal(*cache); err == nil {
+		err = os.WriteFile(cache.Path, content, 0666)
+	}
+	return
+}
+
+func updateStatus(modify func(*lxl) error) (err error) {
+	if err = loadStatus(); err != nil {
+		return
+	}
+
+	if err = modify(cache); err == nil {
+		err = saveStatus()
+	}
+	return
 }

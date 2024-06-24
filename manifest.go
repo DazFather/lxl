@@ -3,228 +3,183 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
-	"path"
-	"path/filepath"
-	"runtime"
+	"net/url"
+	"slices"
 	"strings"
 )
 
-const BASE_ENDPOINT = "https://raw.githubusercontent.com/lite-xl/lite-xl-plugins/master/"
+const (
+	GITHUB_RAW_HOST = "raw.githubusercontent.com"
+	GITHUB_HOST     = "github.com"
 
-type manifest struct {
-	Addons  []addon     `json:"addons,omitempty"`
-	Remotes []string    `json:"remotes,omitempty"`
-	LiteXLs []lxlclient `json:"lite-xls,omitempty"`
-}
+	BASE_ENDPOINT = "https://" + GITHUB_RAW_HOST + "/lite-xl/"
+)
 
-var cache *manifest
-
-func fetchManifest() (*manifest, error) {
-	if cache == nil {
-		cache = new(manifest)
-		if raw, e := get(BASE_ENDPOINT + "manifest.json"); e != nil {
-			return nil, fmt.Errorf("Error while retrieveing manifest: %s", e)
-		} else if e = json.Unmarshal(raw, cache); e != nil {
-			return cache, fmt.Errorf("Error while parsing manifest: %s", e)
-		}
-	}
-
-	return cache, nil
-}
-
-type lxlclient struct {
+type liteXlClient struct {
 	Version    string `json:"version,omitempty"`
 	ModVersion any    `json:"mod_version,omitempty"`
 	Files      []file `json:"files,omitempty"`
 }
 
-type post string
-
-func (p *post) UnmarshalJSON(b []byte) error {
-	if err := json.Unmarshal(b, &p); err == nil {
-		return nil
-	}
-
-	m := make(map[string]string)
-	if err := json.Unmarshal(b, &m); err != nil {
-		return err
-	}
-
-	if s, ok := m[runtime.GOOS]; ok {
-		*p = post(s)
-		return nil
-	}
-
-	for key := range m {
-		if strings.HasSuffix(key, runtime.GOOS) {
-			*p = post(m[key])
-			return nil
-		}
-	}
-	return fmt.Errorf("Invalid post on: %s", b)
+type manifest struct {
+	Addons  []addon        `json:"addons,omitempty"`
+	Remotes []string       `json:"remotes,omitempty"`
+	LiteXLs []liteXlClient `json:"lite-xls,omitempty"`
 }
 
-func (p post) execute() error {
-	if p == "" {
-		return nil
-	}
-
-	cmd := exec.Command(string(p))
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-
-	return cmd.Run()
+type lxl struct {
+	Remotes []string
+	Path    string
+	*manifest
 }
 
-type dependency struct {
-	Version  string `json:"version,omitempty"`
-	Optional bool   `json:"optional,omitempty"`
-}
+var cache *lxl
 
-type file struct {
-	Url      string `json:"url"`
-	Checksum string `json:"checksum"`
-	Arch     string `json:"arch"`
-	Path     string `json:"path,omitempty"`
-	Optional bool   `json:"optional,omitempty"`
-}
-
-var wrongOs error = fmt.Errorf("Mismached os")
-
-func (f file) download() error {
-	if f.Arch != "*" && !strings.HasSuffix(f.Arch, runtime.GOOS) {
-		return wrongOs
-	}
-
-	content, err := get(f.Url)
-	if err != nil {
-		return err
-	}
-
-	local := f.Path
-	if local == "" {
-		local = path.Base(f.Url)
-	}
-
-	err = os.WriteFile(local, content, 0666)
-	return err
-}
-
-type addonsType uint8
-
-const (
-	plugin addonsType = iota
-	font
-	library
-	color
-	meta
-)
-
-var aTypes = []string{"plugin", "font", "library", "color", "meta"}
-
-func (t addonsType) String() string {
-	return aTypes[t]
-}
-
-func (t *addonsType) UnmarshalJSON(b []byte) error {
-	var s string
-	if err := json.Unmarshal(b, &s); err != nil {
-		return err
-	}
-
-	for i := range aTypes {
-		if s == aTypes[i] {
-			*t = addonsType(i)
+func (l *lxl) has(reference string) (bool, error) {
+	var commit string
+	if ind := strings.LastIndexByte(reference, ':'); ind > 0 {
+		reference, commit = reference[:ind], reference[ind+1:]
+		if commit != "latest" && commit != "last" {
+			return false, fmt.Errorf("Unsupported commit specifier on remote")
 		}
 	}
 
-	if t == nil {
-		return fmt.Errorf("Unrecognized addon type: %s", s)
-	}
-	return nil
-}
-
-func (t addonsType) folder() string {
-	switch t {
-	case color, font, plugin:
-		return t.String() + "s"
-	case library:
-		return "libraries"
-	}
-	return plugin.folder()
-}
-
-type addon struct {
-	ID           string                 `json:"id"`
-	Version      string                 `json:"version"`
-	ModVersion   any                    `json:"mod_version,omitempty"`
-	AddonsType   addonsType             `json:"type"`
-	Name         string                 `json:"name,omitempty"`
-	Description  string                 `json:"description,omitempty"`
-	Provides     []string               `json:"provides,omitempty"`
-	Replaces     []string               `json:"replaces,omitempty"`
-	Remote       string                 `json:"remote,omitempty"`
-	Dependencies map[string]*dependency `json:"dependencies,omitempty"`
-	Conflicts    map[string]*dependency `json:"conflicts,omitempty"`
-	Tags         []string               `json:"tags,omitempty"`
-	Path         string                 `json:"path,omitempty"`
-	Arch         []string               `json:"arch,omitempty"`
-	Post         post                   `json:"post,omitempty"`
-	Url          string                 `json:"url,omitempty"`
-	Checksum     string                 `json:"checksum,omitempty"`
-	Extra        map[string]string      `json:"extra,omitempty"`
-	Files        []file                 `json:"files,omitempty"`
-}
-
-func (a addon) dir(subdir ...string) (string, error) {
-	var path = a.Path
-	if path == "" && len(a.Files) == 1 && a.Files[0].Path != "" {
-		path = a.Files[0].Path
-	}
-
-	switch path {
-	case "", ".":
-		path = filepath.Join(a.AddonsType.folder(), a.ID)
-	}
-
-	return configPath(append([]string{path}, subdir...)...)
-}
-
-func (a addon) endpoint() (endpoint string, singleton bool, err error) {
-	if a.Url != "" {
-		endpoint = a.Url
-	} else if a.Remote == "" {
-		switch len(a.Files) {
-		case 0:
-			endpoint = BASE_ENDPOINT + a.AddonsType.folder() + "/" + a.ID + ".lua"
-		case 1:
-			endpoint = a.Files[0].Url
-		default:
-			err = fmt.Errorf("Cannot find valid endpoint")
-		}
-	} else if strings.HasPrefix(a.Remote, "http") {
-		endpoint = a.Remote
+	if u, err := url.Parse(reference); err == nil {
+		reference = u.Path
 	} else {
-		endpoint = BASE_ENDPOINT + a.Remote
+		return false, err
 	}
 
-	singleton = strings.HasSuffix(endpoint, ".lua")
+	has := slices.ContainsFunc(l.Remotes, func(item string) bool {
+		return strings.Contains(item, reference)
+	})
+	return has, nil
+}
+
+func (l *lxl) add(reference string) (bool, error) {
+	var commit string
+	if ind := strings.LastIndexByte(reference, ':'); ind > 0 {
+		reference, commit = reference[:ind], reference[ind+1:]
+		if commit != "latest" && commit != "last" {
+			return false, fmt.Errorf("Unsupported commit specifier on remote")
+		}
+	}
+
+	u, err := url.Parse(reference)
+	if err != nil {
+		return false, err
+	}
+
+	switch strings.ToLower(u.Host) {
+	case GITHUB_HOST:
+		u.Host = GITHUB_RAW_HOST
+		fallthrough
+	case GITHUB_RAW_HOST:
+		reference = u.String()
+	default:
+		if raw, e := get(reference); e != nil {
+			return false, fmt.Errorf("Cannot retrieve manifest: %s", e)
+		} else if e = json.Unmarshal(raw, new(manifest)); e != nil {
+			return false, fmt.Errorf("Error while parsing manifest: %s", e)
+		}
+	}
+
+	has := slices.Contains(l.Remotes, reference)
+	if !has {
+		l.Remotes = append(l.Remotes, reference)
+	}
+	return !has, nil
+}
+
+func fetchManifestAt(endpoint string) (m *manifest, err error) {
+	m = new(manifest)
+	if raw, e := get(endpoint); e != nil {
+		err = fmt.Errorf("Cannot retrieve manifest from %s: %s", endpoint, e)
+	} else if err = json.Unmarshal(raw, m); err != nil {
+		err = fmt.Errorf("Error while parsing manifest from %s: %s", endpoint, err)
+	} else if len(m.Remotes) > 0 {
+		newUrls := []string{}
+		for _, r := range m.Remotes {
+			if has, err := cache.has(r); err != nil && !has {
+				newUrls = append(newUrls, r)
+			}
+		}
+
+		header := ""
+		switch len(newUrls) {
+		case 0:
+			for i := range m.Addons {
+				m.Addons[i].repo = endpoint
+			}
+			return
+		case 1:
+			header = "Found one new remote"
+		default:
+			header += "Found new remotes"
+		}
+
+		success(header, "A remote might contains new addons that would be avaiable to your lxl to find and install. You can add remote via:")
+		for _, u := range newUrls {
+			fmt.Print("  ")
+			command(" lxl subscribe " + u + " ")
+		}
+		fmt.Print("\n\n")
+	}
+
+	if err == nil {
+		for i := range m.Addons {
+			m.Addons[i].repo = endpoint
+		}
+	}
 
 	return
 }
 
-func (a addon) supported() (supported bool) {
-	if len(a.Arch) == 0 {
-		return true
+func fetchManifest() (*manifest, error) {
+	if cache != nil {
+		return cache.manifest, nil
+	} else if err := loadStatus(); err != nil {
+		return nil, err
+	}
+	size := len(cache.Remotes)
+
+	manifestCh := make(chan *manifest, size)
+	errorCh := make(chan error, size)
+	for _, u := range cache.Remotes {
+		go func(url string) {
+			m, err := fetchManifestAt(url)
+			if err != nil {
+				errorCh <- err
+			}
+			manifestCh <- m
+		}(u)
 	}
 
-	for _, arch := range a.Arch {
-		if arch == "*" || strings.HasSuffix(arch, runtime.GOOS) {
-			supported = true
-			return
+	e := 0
+	for i := 0; i < size; {
+		select {
+		case err := <-errorCh:
+			warn("Error with a remote", err)
+			e++
+		case m := <-manifestCh:
+			i++
+			if m == nil {
+				continue
+			}
+			if cache.manifest == nil {
+				cache.manifest = m
+				continue
+			}
+			cache.manifest.Addons = append(cache.manifest.Addons, m.Addons...)
 		}
 	}
-	return
+	if e == size {
+		return nil, fmt.Errorf("No valid remote")
+	}
+	close(errorCh)
+
+	cache.Addons = slices.CompactFunc(cache.Addons, func(a, b addon) bool {
+		return a.ID == b.ID
+	})
+	return cache.manifest, nil
 }
