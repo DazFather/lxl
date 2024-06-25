@@ -128,7 +128,6 @@ func showRemote(url string) string {
 	}
 
 	screen.WriteString(url)
-	screen.WriteString("manifest.json")
 
 	return screen.String()
 }
