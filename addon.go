@@ -172,7 +172,7 @@ func (t addonsType) folder() string {
 type addon struct {
 	ID           string                 `json:"id"`
 	Version      string                 `json:"version"`
-	ModVersion   any                    `json:"mod_version,omitempty"`
+	ModVersion   string                 `json:"mod_version,omitempty"`
 	AddonsType   addonsType             `json:"type"`
 	Name         string                 `json:"name,omitempty"`
 	Description  string                 `json:"description,omitempty"`

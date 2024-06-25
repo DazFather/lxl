@@ -80,11 +80,13 @@ func showAddons(header string, addons []addon) error {
 	case 1:
 		success(header, "Found 1 matching addon")
 		addons[0].showcase()
+		fmt.Println()
 	default:
 		success(header, "Found "+strconv.Itoa(n)+" addons matching")
 		for _, item := range addons {
-			fmt.Println(" ", item.snippet(45))
+			fmt.Println(" ", item.snippet(40))
 		}
+		fmt.Println()
 	}
 	return nil
 }

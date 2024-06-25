@@ -216,6 +216,9 @@ func rangeSaved(each func(addon) error) error {
 
 		err = filepath.WalkDir(from, func(path string, d os.DirEntry, errin error) (err error) {
 			if errin != nil {
+				if os.IsNotExist(errin) {
+					return filepath.SkipDir
+				}
 				return errin
 			}
 
