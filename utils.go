@@ -14,6 +14,14 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+type skipErr struct{}
+
+func (s skipErr) Error() string {
+	return "skip"
+}
+
+var skip = skipErr{}
+
 func get(url string) (body []byte, err error) {
 	res, err := http.Get(url)
 	if err != nil {
@@ -96,13 +104,6 @@ func extract(rawrepo string) (repo, name, commit string, err error) {
 	}
 
 	return
-}
-
-func truncAfter(s string, n int) string {
-	if len(s) > n {
-		return s[:n-3] + "..."
-	}
-	return s
 }
 
 type osEntry interface {

@@ -11,10 +11,10 @@ import (
 func main() {
 	var err error
 	onExit := func() {
-		if err != nil {
-			danger("Unable to "+os.Args[1], err)
-		} else {
+		if err == nil {
 			success(os.Args[1], "Completed successfully")
+		} else if err != skip {
+			danger("Unable to "+os.Args[1], err)
 		}
 	}
 	defer onExit()
@@ -24,7 +24,7 @@ func main() {
 		switch os.Args[1] {
 		case "help":
 			success(os.Args[1], USAGE)
-			onExit = func() {}
+			err = skip
 			return
 		case "list":
 			err = list("")
@@ -39,7 +39,7 @@ func main() {
 		fallthrough
 	case 0, 1:
 		warn("Invalid arguments", USAGE)
-		onExit = func() {}
+		err = skip
 		return
 	}
 
@@ -60,7 +60,7 @@ func main() {
 		err = remotes(os.Args[2])
 	default:
 		danger("Unrecognized command", USAGE)
-		onExit = func() {}
+		err = skip
 		return
 	}
 }
