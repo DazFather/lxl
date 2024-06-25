@@ -286,6 +286,7 @@ func loadStatus() (err error) {
 			BASE_ENDPOINT + "lite-xl-plugins" + suffix,
 			BASE_ENDPOINT + "lite-xl-lsp-servers" + suffix,
 			BASE_ENDPOINT + "lite-xl-ide" + suffix,
+			BASE_ENDPOINT + "lite-xl-colors" + suffix,
 		}}
 		err = saveStatus()
 	}

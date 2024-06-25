@@ -15,6 +15,7 @@ _Manage your remotes_
 > A remote is a link of a [manifest.json](https://github.com/adamharrison/lite-xl-plugin-manager/blob/master/SPEC.md) that contains might contains new addons to discover.
 > By default official ones
 > ([plugins](https://github.com/lite-xl/lite-xl-plugins/blob/master/manifest.json),
+[colors](https://raw.githubusercontent.com/lite-xl/lite-xl-colors/master/manifest.json),
 [lsp-servers](https://github.com/lite-xl/lite-xl-lsp-servers/blob/main/manifest.json) and
 [ide](https://github.com/lite-xl/lite-xl-ide/blob/main/manifest.json)) are already supported
  - **subscribe** to a specific remote `lxl subscribe <remote>`
