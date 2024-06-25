@@ -212,7 +212,11 @@ func (a addon) endpoint() (endpoint string, singleton bool, err error) {
 	} else if a.Remote == "" {
 		switch len(a.Files) {
 		case 0:
-			endpoint, err = url.JoinPath(a.repo, a.AddonsType.folder(), a.ID+".lua")
+			u, err := url.Parse(a.repo)
+			if err == nil {
+				u.Path = path.Dir(u.Path)
+				endpoint, err = url.JoinPath(u.String(), a.AddonsType.folder(), a.ID+".lua")
+			}
 		case 1:
 			endpoint = a.Files[0].Url
 		default:
@@ -221,7 +225,11 @@ func (a addon) endpoint() (endpoint string, singleton bool, err error) {
 	} else if strings.HasPrefix(a.Remote, "http") {
 		endpoint = a.Remote
 	} else {
-		endpoint, err = url.JoinPath(a.repo, a.Remote)
+		u, err := url.Parse(a.repo)
+		if err == nil {
+			u.Path = path.Dir(u.Path)
+			endpoint, err = url.JoinPath(u.String(), a.AddonsType.folder(), a.ID+".lua")
+		}
 	}
 
 	singleton = strings.HasSuffix(endpoint, ".lua")

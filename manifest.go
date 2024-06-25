@@ -126,7 +126,7 @@ func fetchManifestAt(endpoint string) (m *manifest, err error) {
 		fmt.Print("\n\n")
 	}
 
-	if err == nil {
+	if m != nil {
 		for i := range m.Addons {
 			m.Addons[i].repo = endpoint
 		}
