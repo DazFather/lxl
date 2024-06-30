@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -28,14 +30,31 @@ type manifest struct {
 }
 
 type lxl struct {
-	Remotes []string
-	Path    string
+	Remotes    []string
+	Path       string
+	installing []*addon
 	*manifest
 }
 
 var cache *lxl
 
-func (l *lxl) has(reference string) (bool, error) {
+func (l *lxl) retrieve(addonID string) (found *addon) {
+	for _, add := range l.installing {
+		if add != nil && add.ID == addonID {
+			return add
+		}
+	}
+
+	for _, add := range l.manifest.Addons {
+		if add.ID == addonID {
+			return &add
+		}
+	}
+
+	return
+}
+
+func (l lxl) hasRemote(reference string) (bool, error) {
 	var commit string
 	if ind := strings.LastIndexByte(reference, ':'); ind > 0 {
 		reference, commit = reference[:ind], reference[ind+1:]
@@ -56,7 +75,7 @@ func (l *lxl) has(reference string) (bool, error) {
 	return has, nil
 }
 
-func (l *lxl) add(reference string) (bool, error) {
+func (l *lxl) addRemote(reference string) (bool, error) {
 	var commit string
 	if ind := strings.LastIndexByte(reference, ':'); ind > 0 {
 		reference, commit = reference[:ind], reference[ind+1:]
@@ -91,39 +110,64 @@ func (l *lxl) add(reference string) (bool, error) {
 	return !has, nil
 }
 
-func fetchManifestAt(endpoint string) (m *manifest, err error) {
+func parseManifest(b []byte) (m *manifest, err error) {
 	m = new(manifest)
-	if raw, e := get(endpoint); e != nil {
-		err = fmt.Errorf("Cannot retrieve manifest from %s: %s", endpoint, e)
-	} else if err = json.Unmarshal(raw, m); err != nil {
-		err = fmt.Errorf("Error while parsing manifest from %s: %s", endpoint, err)
-	} else if len(m.Remotes) > 0 {
+	if err = json.Unmarshal(b, m); err != nil {
+		return
+	}
+
+	if len(m.Remotes) > 0 {
 		newUrls := []string{}
 		for _, r := range m.Remotes {
-			if has, err := cache.has(r); err != nil && !has {
+			if has, err := cache.hasRemote(r); err != nil && !has {
 				newUrls = append(newUrls, r)
 			}
 		}
 
-		header := ""
 		switch len(newUrls) {
 		case 0:
-			for i := range m.Addons {
-				m.Addons[i].repo = endpoint
-			}
-			return
+			break
 		case 1:
-			header = "Found one new remote"
-		default:
-			header += "Found new remotes"
-		}
-
-		success(header, "A remote might contains new addons that would be avaiable to your lxl to find and install. You can add remote via:")
-		for _, u := range newUrls {
+			success("Found one new remote", "A remote might contains new addons that would be avaiable to your lxl to find and install. You can this remote via:")
 			fmt.Print("  ")
-			command(" lxl subscribe " + u + " ")
+			command(" lxl subscribe " + newUrls[0] + " ")
+		default:
+			success("Found new remotes", "A remote might contains new addons that would be avaiable to your lxl to find and install. You can add remote via:")
+			for _, u := range newUrls {
+				fmt.Print("  ")
+				command(" lxl subscribe " + u + " ")
+			}
+			fmt.Print("\n\n")
 		}
-		fmt.Print("\n\n")
+	}
+
+	return
+}
+
+func fetchLocalManifest(filename string) (m *manifest, err error) {
+	raw, err := os.ReadFile(filename)
+	if err != nil {
+		err = fmt.Errorf("Cannot read manifest from file %s: %s", filename, err)
+	} else if m, err = parseManifest(raw); err != nil {
+		err = fmt.Errorf("Error while parsing manifest from %s: %s", filename, err)
+	}
+
+	if m != nil {
+		filename = filepath.Dir(filename)
+		for i := range m.Addons {
+			m.Addons[i].repo = filename
+		}
+	}
+
+	return
+}
+
+func fetchRemoteManifest(endpoint string) (m *manifest, err error) {
+	raw, err := get(endpoint)
+	if err != nil {
+		err = fmt.Errorf("Cannot retrieve manifest from %s: %s", endpoint, err)
+	} else if m, err = parseManifest(raw); err != nil {
+		err = fmt.Errorf("Error while parsing manifest from %s: %s", endpoint, err)
 	}
 
 	if m != nil {
@@ -141,13 +185,18 @@ func fetchManifest() (*manifest, error) {
 	} else if err := loadStatus(); err != nil {
 		return nil, err
 	}
-	size := len(cache.Remotes)
 
-	manifestCh := make(chan *manifest, size)
-	errorCh := make(chan error, size)
+	var (
+		size       = len(cache.Remotes)
+		manifestCh = make(chan *manifest, size)
+		errorCh    = make(chan error, size)
+	)
+	defer close(manifestCh)
+	defer close(errorCh)
+
 	for _, u := range cache.Remotes {
 		go func(url string) {
-			m, err := fetchManifestAt(url)
+			m, err := fetchRemoteManifest(url)
 			if err != nil {
 				errorCh <- err
 			}
@@ -176,7 +225,6 @@ func fetchManifest() (*manifest, error) {
 	if e == size {
 		return nil, fmt.Errorf("No valid remote")
 	}
-	close(errorCh)
 
 	cache.Addons = slices.CompactFunc(cache.Addons, func(a, b addon) bool {
 		return a.ID == b.ID

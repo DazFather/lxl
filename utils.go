@@ -278,9 +278,7 @@ func loadStatus() (err error) {
 	// Read /lxl/status.toml
 	if content, err = os.ReadFile(path); err == nil {
 		cache = new(lxl)
-		if err = toml.Unmarshal(content, cache); err == nil {
-			return
-		}
+		err = toml.Unmarshal(content, cache)
 	} else if os.IsNotExist(err) {
 		cache = &lxl{Path: path, Remotes: []string{
 			BASE_ENDPOINT + "lite-xl-plugins" + suffix,

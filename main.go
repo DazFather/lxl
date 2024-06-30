@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -111,6 +112,7 @@ func uninstall(addonID string) (err error) {
 }
 
 func install(addonID string) (err error) {
+
 	// Retrieve manifest
 	manifest, err := fetchManifest()
 	if err != nil {
@@ -118,31 +120,57 @@ func install(addonID string) (err error) {
 	}
 
 	// Finding addon
-	var found *addon
-	for _, item := range manifest.Addons {
-		if item.ID == addonID {
-			found = &item
-			break
-		}
-	}
+	var found = cache.retrieve(addonID)
+	fmt.Println("installing", addonID, "from:", found.repo)
 	if found == nil {
 		return fmt.Errorf("Cannot find %s addon", addonID)
+	} else if installed, e := found.isInstalled(); installed {
+		return fmt.Errorf("%s already installed", addonID)
+	} else if e != nil {
+		return e
+	} else if !found.supported() {
+		return fmt.Errorf("Addon does not support your OS")
 	}
 
-	// Check for conflicts
-	for _, item := range manifest.Addons {
-		for dep := range found.Conflicts {
-			if item.ID != dep {
-				continue
-			}
+	local, err := found.dir()
+	if err != nil {
+		return
+	}
+	fmt.Println("LOCAL", local)
 
-			if path, e := item.dir(); e != nil {
-				return e
-			} else if e := remove(path); !os.IsNotExist(e) {
-				return e
+	repo, singleton, err := found.endpoint()
+	if err != nil {
+		return
+	}
+
+	fmt.Println("ENPOINT", repo)
+
+	if singleton {
+		content := []byte{}
+		if strings.HasPrefix(repo, "http") {
+			content, err = get(repo)
+		} else {
+			content, err = os.ReadFile(repo)
+		}
+		if err == nil {
+			err = os.WriteFile(local, content, 0666)
+		}
+	} else {
+		switch found.Path {
+		case ".", filepath.Join(found.AddonsType.folder(), found.ID):
+			if _, err = clone(repo, local); err != nil {
+				return
 			}
+		default:
+			err = found.installRepo(repo, local)
 		}
 	}
+
+	if err != nil {
+		return
+	}
+
+	// Installing addon
 
 	// Removing old dependencies
 	for _, dep := range found.Replaces {
@@ -152,19 +180,42 @@ func install(addonID string) (err error) {
 		}
 	}
 
-	// Installing dependencies
 	for _, item := range manifest.Addons {
+		// Check for conflicts
+		for dep := range found.Conflicts {
+			if item.ID != dep {
+				continue
+			}
+
+			if path, e := item.dir(); e != nil {
+				return e
+			} else if e := remove(path); err != nil && !os.IsNotExist(e) {
+				return e
+			}
+		}
+
+		// Installing dependencies
 		for dep := range found.Dependencies {
-			if item.ID == dep {
-				if err = item.install(); err != nil {
-					return
-				}
+			if item.ID != dep {
+				continue
+			}
+
+			isInstalled := false
+			isInstalled, err = item.isInstalled()
+			if isInstalled {
+				continue
+			} else if err != nil {
+				return
+			}
+
+			if err = install(dep); err != nil && !found.Dependencies[dep].Optional {
+				err = fmt.Errorf("Cannot install mandatory dependency %s: %s", dep, err)
+				return
 			}
 		}
 	}
 
-	// Installing addon
-	return found.install()
+	return
 }
 
 func list(addonID string) (err error) {
@@ -204,7 +255,7 @@ func list(addonID string) (err error) {
 
 func subscribe(repo string) error {
 	return updateStatus(func(l *lxl) error {
-		added, e := l.add(repo)
+		added, e := l.addRemote(repo)
 		if e == nil && !added {
 			e = fmt.Errorf("evaluated remote %s is already present on lxl remote list", repo)
 		}

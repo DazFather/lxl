@@ -194,16 +194,36 @@ type addon struct {
 
 func (a addon) dir(subdir ...string) (string, error) {
 	var path = a.Path
-	if path == "" && len(a.Files) == 1 && a.Files[0].Path != "" {
-		path = a.Files[0].Path
+
+	if path == "" && len(a.Files) == 1 {
+		if fpath := a.Files[0].Path; fpath != "" {
+			path = fpath
+		} else {
+			path = filepath.Base(a.Files[0].Url)
+		}
 	}
 
 	switch path {
-	case "", ".":
-		path = filepath.Join(a.AddonsType.folder(), a.ID)
+	case ".":
+		path = a.ID
+	case "":
+		return "", nil
 	}
 
-	return configPath(append([]string{path}, subdir...)...)
+	return configPath(append([]string{a.AddonsType.folder(), path}, subdir...)...)
+}
+
+func buildEndpoint(a addon) (endpoint string, err error) {
+	var u *url.URL
+
+	if !strings.HasPrefix(a.repo, "http") {
+		endpoint = filepath.Join(a.repo, a.Path)
+	} else if u, err = url.Parse(a.repo); err == nil {
+		u.Path = path.Dir(u.Path)
+		endpoint, err = url.JoinPath(u.String(), a.AddonsType.folder(), a.ID+".lua")
+	}
+
+	return
 }
 
 func (a addon) endpoint() (endpoint string, singleton bool, err error) {
@@ -212,12 +232,10 @@ func (a addon) endpoint() (endpoint string, singleton bool, err error) {
 	} else if a.Remote == "" {
 		switch len(a.Files) {
 		case 0:
-			u, err := url.Parse(a.repo)
-			if err == nil {
-				u.Path = path.Dir(u.Path)
-				endpoint, err = url.JoinPath(u.String(), a.AddonsType.folder(), a.ID+".lua")
-			}
+			singleton = true
+			endpoint, err = buildEndpoint(a)
 		case 1:
+			singleton = true
 			endpoint = a.Files[0].Url
 		default:
 			err = fmt.Errorf("Cannot find valid endpoint")
@@ -225,14 +243,13 @@ func (a addon) endpoint() (endpoint string, singleton bool, err error) {
 	} else if strings.HasPrefix(a.Remote, "http") {
 		endpoint = a.Remote
 	} else {
-		u, err := url.Parse(a.repo)
-		if err == nil {
-			u.Path = path.Dir(u.Path)
-			endpoint, err = url.JoinPath(u.String(), a.AddonsType.folder(), a.ID+".lua")
-		}
+		singleton = true
+		endpoint, err = buildEndpoint(a)
 	}
 
-	singleton = strings.HasSuffix(endpoint, ".lua")
+	if !singleton {
+		singleton = strings.HasSuffix(endpoint, ".lua")
+	}
 
 	return
 }
@@ -251,90 +268,146 @@ func (a addon) supported() (supported bool) {
 	return
 }
 
-func (a addon) install() error {
-	if !a.supported() {
-		return fmt.Errorf("plugin does not support your OS")
+func (a addon) isInstalled() (installed bool, err error) {
+	var path string
+
+	if path, err = a.dir(); err != nil {
+		return
 	}
 
-	var repo, singleton, err = a.endpoint()
-	if err != nil {
-		return err
-	}
-
-	local, err := a.dir()
-	if err != nil {
-		return err
-	}
-
-	if singleton {
-		if !strings.HasSuffix(local, ".lua") {
-			local += ".lua"
+	if _, err = os.Stat(path); err == nil {
+		installed = true
+	} else if os.IsNotExist(err) {
+		if _, err = os.Stat(path + ".lua"); err == nil {
+			installed = true
+		} else if os.IsNotExist(err) {
+			err = nil
 		}
-
-		content, err := get(repo)
-		if err == nil {
-			err = os.WriteFile(local, content, 0666)
-		}
-		return err
 	}
 
-	switch a.Path {
-	case ".", filepath.Join(a.AddonsType.folder(), a.ID):
-		_, err = clone(repo, local)
-	default:
-		path, e := clone(repo, "")
+	return
+}
+
+func stub(self *addon, manifestPath string) (foundself bool, err error) {
+	var stub *manifest
+	if stub, err = fetchLocalManifest(manifestPath); err != nil {
+		err = fmt.Errorf("Cannot correctly retrieve stub: %s", err)
+		return
+	}
+
+	var toInstall = make([]*addon, len(stub.Addons))
+	for i, stubAdd := range stub.Addons {
+		fmt.Println("-", stubAdd.ID, stubAdd.Version)
+		if stubAdd.ID != self.ID {
+			//if found := cache.retrieve(self.ID); found != nil {
+			//	fmt.Println(" copying repo (ID", self.ID, ")", found.repo)
+			//}
+			fmt.Println("\t- ADDING", stubAdd.ID, "vs", self.ID)
+			// stubAdd.repo = self.repo
+			//tmp := stubAdd
+			toInstall[i] = new(addon)
+			*toInstall[i] = stubAdd
+		} else if stubAdd.Version != self.Version || stubAdd.ModVersion != self.ModVersion || stubAdd.Remote != self.Remote {
+
+			warn("broken stub", "version on stub diverge from repository, installation may be inconsistent")
+			// if found := cache.retrieve(self.ID); found != nil {
+			// 	fmt.Println(" copying repo (V.", self.Version, ")", found.repo)
+			// 	stubAdd.repo = found.repo
+			// }
+			tmp := stubAdd
+			cache.installing = append(cache.installing, &tmp)
+			return true, install(stubAdd.ID)
+		}
+	}
+
+	errch := make(chan error, len(toInstall))
+	defer close(errch)
+	for _, add := range toInstall {
+		if add == nil {
+			errch <- nil
+			continue
+		}
+		cache.installing = append(cache.installing, add)
+		go func(addonID string) {
+			errch <- install(addonID)
+		}(add.ID)
+	}
+
+	i := 0
+	for e := range errch {
 		if e != nil {
-			return e
+			warn("error douring stub", e)
+			err = e
 		}
-		defer remove(path)
-
-		// Detecting singleton
-		entries, e := os.ReadDir(path)
-		if e != nil {
-			return e
-		}
-		var init *string
-		for _, item := range entries {
-			if !isRelevant(item) {
-				if item.Name() == "manifest.json" {
-					warn("stud detected", "studs are not currently supported")
-				}
-				continue
-			}
-
-			if init == nil {
-				init = new(string)
-				*init = item.Name()
-			} else {
-				init = nil
-				break
-			}
-		}
-		// Singleton detected
-		if init != nil {
-			local += ".lua"
-			err = os.Rename(filepath.Join(path, *init), local)
+		if i++; i == len(toInstall) {
 			break
 		}
-
-		err = moveDirFiltered(path, local, func(_ string, d os.DirEntry) bool {
-			return isRelevant(d)
-		})
-
-		if err != nil {
-			remove(local)
-		}
 	}
 
 	if err != nil {
-		return err
+		for _, add := range toInstall {
+			if add != nil {
+				uninstall(add.ID)
+			}
+		}
+		err = fmt.Errorf("Cannot install all stub dependencies, previous state has been repristinated but there still might be some inconsistencies")
 	}
 
-	for _, f := range a.Files {
-		if err = f.download(); err != nil && err != wrongOs && !f.Optional {
-			return err
+	return
+}
+
+func (a *addon) installRepo(repo, local string) (err error) {
+	var path string
+
+	fmt.Println("cloning", repo)
+	if path, err = clone(repo, ""); err != nil {
+		return
+	}
+	fmt.Println("END cloning")
+	defer remove(path)
+
+	// Detecting singleton & stub
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return
+	}
+	var init *string
+	for _, item := range entries {
+		name := item.Name()
+		if isRelevant(item) {
+			if init == nil {
+				init = new(string)
+				*init = name
+			} else {
+				*init = ""
+			}
+			continue
+		}
+
+		// stub detected
+		if name == "manifest.json" {
+			fmt.Println("stub detected", a.repo)
+			self := false
+			if self, err = stub(a, filepath.Join(path, name)); self || err != nil {
+				return
+			}
 		}
 	}
+	// Singleton detected
+	if init != nil && *init != "" {
+		if filepath.Ext(local) == "" {
+			local += filepath.Ext(*init)
+		}
+		err = os.Rename(filepath.Join(path, *init), local)
+	} else if local != "" {
+		err = moveDirFiltered(path, local, func(_ string, d os.DirEntry) bool { return isRelevant(d) })
+	} else {
+		warn("I dunno what to do")
+	}
 
-	return a.Post.execute()
+	if err == nil {
+		err = a.Post.execute()
+	}
+
+	return
 }

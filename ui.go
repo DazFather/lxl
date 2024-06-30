@@ -70,7 +70,7 @@ func (a addon) showcase() {
 		"\nDescription: ", a.Description,
 		"\n\nTo install latest version use command:\n ",
 	))
-	command("lxl install ", a.ID, " ")
+	command(" lxl install " + a.ID + " ")
 }
 
 func showAddons(header string, addons []addon) error {
@@ -96,7 +96,7 @@ func showRemote(url string) string {
 
 	screen.WriteString(" > ")
 
-	m, err := fetchManifestAt(url)
+	m, err := fetchRemoteManifest(url)
 	if err != nil {
 		screen.WriteString(brush.Paint(brush.BrightWhite, brush.UseColor(brush.Red), " BROKEN ").String())
 		screen.WriteByte(' ')
